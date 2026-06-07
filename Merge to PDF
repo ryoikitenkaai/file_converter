@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# nautilus right-click → Scripts → Merge to PDF
+# select 2+ files, merges them into one pdf
+
+LOGFILE="$HOME/.local/share/nautilus/scripts/conv.log"
+exec >>"$LOGFILE" 2>&1
+echo "=== merge $(date) ==="
+
+CONV=/usr/local/bin/conv
+
+FILES=()
+while IFS= read -r line; do
+    [ -f "$line" ] && FILES+=("$line")
+done <<< "$NAUTILUS_SCRIPT_SELECTED_FILE_PATHS"
+
+COUNT=${#FILES[@]}
+
+if [ "$COUNT" -lt 2 ]; then
+    zenity --error --title="Merge to PDF" \
+        --text="select at least 2 files to merge." --width=280
+    exit 1
+fi
+
+DIR=$(dirname "${FILES[0]}")
+DEFAULT="$DIR/merged.pdf"
+
+OUTPUT=$(zenity --file-selection --save --confirm-overwrite \
+    --title="save merged PDF as..." \
+    --filename="$DEFAULT" \
+    --file-filter="PDF | *.pdf")
+
+[ -z "$OUTPUT" ] && exit 0
+[[ "$OUTPUT" != *.pdf ]] && OUTPUT="${OUTPUT}.pdf"
+
+echo "merging ${FILES[*]} → $OUTPUT"
+
+RESULT=$($CONV merge "$OUTPUT" "${FILES[@]}" 2>&1)
+CODE=$?
+echo "exit: $CODE | $RESULT"
+
+if [ $CODE -eq 0 ] && [ -f "$OUTPUT" ]; then
+    zenity --info --title="done" \
+        --text="✓ merged $COUNT files\n\n<b>$(basename "$OUTPUT")</b>\n$DIR" \
+        --width=340
+else
+    CLEAN=$(echo "$RESULT" | sed 's/\x1b\[[0-9;]*m//g')
+    zenity --error --title="merge failed" --text="$CLEAN" --width=400
+fi
+
+echo "=== done ==="

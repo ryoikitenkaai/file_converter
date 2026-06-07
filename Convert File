@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# nautilus right-click → Scripts → Convert File
+
+LOGFILE="$HOME/.local/share/nautilus/scripts/conv.log"
+exec >>"$LOGFILE" 2>&1
+echo "=== $(date) ==="
+
+CONV=/usr/local/bin/conv
+
+if ! command -v zenity &>/dev/null; then
+    notify-send "conv" "zenity not found. run: sudo apt install zenity"
+    exit 1
+fi
+
+if [ ! -x "$CONV" ]; then
+    zenity --error --title="conv" \
+        --text="conv not found at $CONV\n\nrun: sudo cp conv.py /usr/local/bin/conv &amp;&amp; sudo chmod +x /usr/local/bin/conv" \
+        --width=400
+    exit 1
+fi
+
+ext_to_flag() {
+    case "${1,,}" in
+        markdown) echo "md" ;;
+        *)        echo "${1,,}" ;;
+    esac
+}
+
+get_formats() {
+    case "${1,,}" in
+        png|jpg|jpeg|webp|bmp|gif|tiff|tif) echo "PDF" ;;
+        pdf)                                 echo "PNG|JPG|TXT|DOCX|HTML" ;;
+        docx)                                echo "PDF|TXT|Markdown" ;;
+        pptx|ppt)                            echo "PDF|PNG|TXT" ;;
+        md|markdown)                         echo "PDF|HTML|DOCX" ;;
+        html|htm)                            echo "PDF|Markdown|DOCX|TXT" ;;
+        txt)                                 echo "PDF|HTML|Markdown" ;;
+        *)                                   echo "" ;;
+    esac
+}
+
+while IFS= read -r INPUT; do
+    [ -z "$INPUT" ] && continue
+    [ -f "$INPUT" ] || continue
+
+    FILENAME=$(basename "$INPUT")
+    EXT="${FILENAME##*.}"
+    BASE="${FILENAME%.*}"
+    DIR=$(dirname "$INPUT")
+    FORMATS=$(get_formats "$EXT")
+
+    if [ -z "$FORMATS" ]; then
+        zenity --error --title="conv" \
+            --text=".$EXT files aren't supported.\n\nSupported: images, pdf, docx, pptx, md, html, txt" \
+            --width=360
+        continue
+    fi
+
+    RADIO_ARGS=()
+    FIRST=true
+    IFS='|' read -ra FMTS <<< "$FORMATS"
+    for fmt in "${FMTS[@]}"; do
+        if $FIRST; then RADIO_ARGS+=("TRUE" "$fmt"); FIRST=false
+        else RADIO_ARGS+=("FALSE" "$fmt"); fi
+    done
+
+    CHOSEN=$(zenity --list \
+        --title="Convert: $FILENAME" \
+        --text="select output format for <b>$FILENAME</b>" \
+        --radiolist --column="" --column="Format" \
+        "${RADIO_ARGS[@]}" \
+        --width=280 --height=260)
+
+    echo "chosen: $CHOSEN"
+    [ -z "$CHOSEN" ] && continue
+
+    OUT_EXT=$(ext_to_flag "$CHOSEN")
+    OUTPUT="$DIR/${BASE}.${OUT_EXT}"
+
+    if [ -f "$OUTPUT" ]; then
+        zenity --question --title="conv" \
+            --text="<b>$(basename "$OUTPUT")</b> already exists. overwrite?" \
+            --width=320 || continue
+    fi
+
+    echo "running: $CONV '$INPUT' '$OUTPUT'"
+    RESULT=$($CONV "$INPUT" "$OUTPUT" 2>&1)
+    CODE=$?
+    echo "exit: $CODE | $RESULT"
+
+    if [ $CODE -eq 0 ] && [ -f "$OUTPUT" ]; then
+        zenity --info --title="done" \
+            --text="✓ <b>$(basename "$OUTPUT")</b>\n\n$DIR" \
+            --width=340
+    else
+        CLEAN_RESULT=$(echo "$RESULT" | sed 's/\x1b\[[0-9;]*m//g')
+        zenity --error --title="conv failed" \
+            --text="$CLEAN_RESULT\n\nlog: $LOGFILE" \
+            --width=400
+    fi
+
+done <<< "$NAUTILUS_SCRIPT_SELECTED_FILE_PATHS"
+
+echo "=== done ==="
